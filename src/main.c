@@ -171,6 +171,8 @@ static void render(struct display_output *output) {
     // Display frame
     if (!eglSwapBuffers(egl_display, output->egl_surface))
         cflp_error("Failed to swap egl buffers %s", eglGetErrorString(eglGetError()));
+
+    mpv_render_context_report_swap(mpv_glcontext);
 }
 
 static void frame_handle_done(void *data, struct wl_callback *callback, uint32_t frame_time) {
@@ -362,19 +364,23 @@ static void *handle_mpv_events(void *_) {
             }
         }
 
-        mpv_event *event = mpv_wait_event(mpv, 0);
+        while (true) {
+            mpv_event *event = mpv_wait_event(mpv, 0);
+            if (event->event_id == MPV_EVENT_NONE)
+                break;
 
-        if (event->event_id == MPV_EVENT_SHUTDOWN) {
-            exit_mpvpaper(EXIT_SUCCESS);
-        } else if (event->event_id == MPV_EVENT_PROPERTY_CHANGE) {
-            if (event->reply_userdata == MPV_OBSERVE_PAUSE) {
-                mpv_get_property(mpv, "pause", MPV_FORMAT_FLAG, &mpv_paused);
-                if (mpv_paused) {
-                    // User paused
-                    if (!halt_info.is_paused)
-                        halt_info.is_paused += 1;
-                } else {
-                    halt_info.is_paused = 0;
+            if (event->event_id == MPV_EVENT_SHUTDOWN) {
+                exit_mpvpaper(EXIT_SUCCESS);
+            } else if (event->event_id == MPV_EVENT_PROPERTY_CHANGE) {
+                if (event->reply_userdata == MPV_OBSERVE_PAUSE) {
+                    mpv_get_property(mpv, "pause", MPV_FORMAT_FLAG, &mpv_paused);
+                    if (mpv_paused) {
+                        // User paused
+                        if (!halt_info.is_paused)
+                            halt_info.is_paused += 1;
+                    } else {
+                        halt_info.is_paused = 0;
+                    }
                 }
             }
         }
@@ -759,6 +765,8 @@ static void output_name(void *data, struct wl_output *wl_output, const char *nam
     (void)wl_output;
 
     struct display_output *output = data;
+    if (output->name)
+        free(output->name);
     output->name = strdup(name);
 }
 
@@ -771,6 +779,9 @@ static void output_description(void *data, struct wl_output *wl_output, const ch
     // Having `(name)` is redundant and must be removed to have a clean identifier.
     // If this changes in the future, this will need to be modified.
     char *paren = strrchr(description, '(');
+    if (output->identifier)
+        free(output->identifier);
+
     if (paren) {
         size_t length = paren - description;
         output->identifier = calloc(length, sizeof(char));
